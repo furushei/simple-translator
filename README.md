@@ -4,8 +4,8 @@ Simple clipboard translator using the Anthropic API. This application allows you
 
 ## Requirements
 
-- Windows (Linux/macOS are not supported)
 - Python 3
+- Tkinter
 - Anthropic API key
 
 ## Installation
@@ -15,6 +15,12 @@ Simple clipboard translator using the Anthropic API. This application allows you
    ```
    python -m venv venv
    venv\Scripts\activate
+   ```
+
+   macOS/Linux:
+   ```
+   python3 -m venv venv
+   source venv/bin/activate
    ```
 
 2. Install the dependencies.
