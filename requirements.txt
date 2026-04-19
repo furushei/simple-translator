@@ -1,3 +1,4 @@
 anthropic
 pyperclip
 python-dotenv
+pytest
