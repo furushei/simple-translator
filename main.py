@@ -8,7 +8,8 @@ import threading
 
 load_dotenv()
 
-MODEL_NAME = "claude-sonnet-4-6"
+MODEL_NAMES = ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"]
+DEFAULT_MODEL = "claude-haiku-4-5"
 MAX_TOKENS = 2048
 
 LANGUAGE_PROMPTS = {
@@ -61,6 +62,22 @@ class ClipboardTranslatorApp:
             width=12,
         )
         lang_menu.pack(side="left", padx=(4, 0))
+
+        # --- Model selector ---
+        tk.Label(
+            toolbar,
+            text="Model:",
+        ).pack(
+            side="left",
+            padx=(4, 0),
+        )
+        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
+        model_menu = ttk.Combobox(
+            toolbar,
+            textvariable=self.model_var,
+            values=MODEL_NAMES
+        )
+        model_menu.pack(side="left", padx=(4, 0))
 
         # --- Translate button ---
         self.translate_btn = tk.Button(
@@ -198,7 +215,7 @@ class ClipboardTranslatorApp:
 
         try:
             with self.client.messages.stream(
-                model=MODEL_NAME,
+                model=self.model_var.get(),
                 max_tokens=MAX_TOKENS,
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
