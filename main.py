@@ -78,6 +78,23 @@ class SimpleTranslatorApp:
         )
         model_menu.pack(side="left", padx=(4, 0))
 
+        # --- Max tokens selector ---
+        tk.Label(
+            toolbar,
+            text="Max Tokens:",
+        ).pack(
+            side="left",
+            padx=(4, 0),
+        )
+        self.max_tokens_var = tk.IntVar(value=MAX_TOKENS)
+        max_tokens_menu = ttk.Combobox(
+            toolbar,
+            textvariable=self.max_tokens_var,
+            values=[512, 1024, 2048, 4096, 8192],
+            width=8,
+        )
+        max_tokens_menu.pack(side="left", padx=(4, 0))
+
         # --- Translate button ---
         self.translate_btn = tk.Button(
             toolbar,
@@ -87,7 +104,7 @@ class SimpleTranslatorApp:
             fg="white",
             relief="flat",
             cursor="hand2",
-            width=12,
+            width=8,
         )
         self.translate_btn.pack(side="right")
 
@@ -215,7 +232,7 @@ class SimpleTranslatorApp:
         try:
             with self.client.messages.stream(
                 model=self.model_var.get(),
-                max_tokens=MAX_TOKENS,
+                max_tokens=self.max_tokens_var.get(),
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
                 self.root.after(0, lambda: self.status_var.set("Translating..."))
@@ -281,7 +298,7 @@ def parse_args():
 def main():
     args = parse_args()
     root = tk.Tk()
-    root.minsize(400, 240)
+    root.minsize(640, 240)
     app = SimpleTranslatorApp(root)
     if args.load_clipboard:
         app._load_clipboard()

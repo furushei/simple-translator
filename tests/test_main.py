@@ -66,6 +66,8 @@ def _make_app(api_key="test-api-key"):
     app.lang_var.get.return_value = "Japanese"
     app.model_var = MagicMock()
     app.model_var.get.return_value = DEFAULT_MODEL
+    app.max_tokens_var = MagicMock()
+    app.max_tokens_var.get.return_value = MAX_TOKENS
     app.client = MagicMock()
     return app, root
 
@@ -349,7 +351,7 @@ class TestCliBehavior(unittest.TestCase):
             patch.object(main, "SimpleTranslatorApp", return_value=mock_app),
         ):
             main.main()
-        mock_tk.return_value.minsize.assert_called_once_with(400, 240)
+        mock_tk.return_value.minsize.assert_called_once_with(640, 240)
         mock_app._load_clipboard.assert_called_once()
         mock_tk.return_value.mainloop.assert_called_once()
 
