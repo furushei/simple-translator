@@ -1,3 +1,4 @@
+import argparse
 import tkinter as tk
 from tkinter import ttk, messagebox
 import pyperclip
@@ -18,10 +19,10 @@ LANGUAGE_PROMPTS = {
 }
 
 
-class ClipboardTranslatorApp:
+class SimpleTranslatorApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Clipboard Translator")
+        self.root.title("Simple Translator")
 
         self._build_ui()
 
@@ -34,8 +35,6 @@ class ClipboardTranslatorApp:
             root.destroy()
             return
         self.client = anthropic.Anthropic(api_key=api_key)
-
-        self._load_clipboard()
 
     def _build_ui(self):
         top_frame = tk.Frame(self.root)
@@ -268,10 +267,24 @@ class ClipboardTranslatorApp:
         pyperclip.copy(result)
         self.status_var.set("Result copied to clipboard")
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Simple Translator App")
+    parser.add_argument(
+        "--load-clipboard",
+        action="store_true",
+        help="Load text from clipboard on startup",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     root = tk.Tk()
     root.minsize(400, 240)
-    ClipboardTranslatorApp(root)
+    app = SimpleTranslatorApp(root)
+    if args.load_clipboard:
+        app._load_clipboard()
     root.mainloop()
 
 

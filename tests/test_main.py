@@ -1,4 +1,4 @@
-"""Unit tests for main.py (ClipboardTranslatorApp)."""
+"""Unit tests for main.py (SimpleTranslatorApp)."""
 
 import sys
 import unittest
@@ -35,7 +35,7 @@ sys.modules["dotenv"] = MagicMock()
 # Now it is safe to import main
 # ---------------------------------------------------------------------------
 import main  # noqa: E402
-from main import ClipboardTranslatorApp, LANGUAGE_PROMPTS, MODEL_NAME, MAX_TOKENS  # noqa: E402
+from main import SimpleTranslatorApp, LANGUAGE_PROMPTS, DEFAULT_MODEL, MAX_TOKENS  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ from main import ClipboardTranslatorApp, LANGUAGE_PROMPTS, MODEL_NAME, MAX_TOKEN
 # ---------------------------------------------------------------------------
 
 def _make_app(api_key="test-api-key"):
-    """Instantiate ClipboardTranslatorApp with all side-effects mocked out.
+    """Instantiate SimpleTranslatorApp with all side-effects mocked out.
 
     Returns ``(app, root_mock)``.  After construction the helper attaches
     MagicMock widgets to the instance so that method tests can exercise widget
@@ -51,11 +51,11 @@ def _make_app(api_key="test-api-key"):
     """
     root = MagicMock()
     with (
-        patch.object(ClipboardTranslatorApp, "_build_ui"),
-        patch.object(ClipboardTranslatorApp, "_load_clipboard"),
+        patch.object(SimpleTranslatorApp, "_build_ui"),
+        patch.object(SimpleTranslatorApp, "_load_clipboard"),
         patch("os.getenv", return_value=api_key),
     ):
-        app = ClipboardTranslatorApp(root)
+        app = SimpleTranslatorApp(root)
 
     # Attach mock widgets that methods under test interact with
     app.source_text = MagicMock()
@@ -64,6 +64,8 @@ def _make_app(api_key="test-api-key"):
     app.translate_btn = MagicMock()
     app.lang_var = MagicMock()
     app.lang_var.get.return_value = "Japanese"
+    app.model_var = MagicMock()
+    app.model_var.get.return_value = DEFAULT_MODEL
     app.client = MagicMock()
     return app, root
 
@@ -73,8 +75,8 @@ def _make_app(api_key="test-api-key"):
 # ---------------------------------------------------------------------------
 
 class TestConstants(unittest.TestCase):
-    def test_model_name(self):
-        self.assertEqual(MODEL_NAME, "claude-sonnet-4-6")
+    def test_default_model(self):
+        self.assertEqual(DEFAULT_MODEL, "claude-haiku-4-5")
 
     def test_max_tokens(self):
         self.assertEqual(MAX_TOKENS, 2048)
@@ -93,7 +95,7 @@ class TestConstants(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Tests: ClipboardTranslatorApp
+# Tests: SimpleTranslatorApp
 # ---------------------------------------------------------------------------
 
 class TestInit(unittest.TestCase):
@@ -104,32 +106,32 @@ class TestInit(unittest.TestCase):
     def test_window_title_is_set(self):
         root = MagicMock()
         with (
-            patch.object(ClipboardTranslatorApp, "_build_ui"),
-            patch.object(ClipboardTranslatorApp, "_load_clipboard"),
+            patch.object(SimpleTranslatorApp, "_build_ui"),
+            patch.object(SimpleTranslatorApp, "_load_clipboard"),
             patch("os.getenv", return_value="key"),
         ):
-            ClipboardTranslatorApp(root)
-        root.title.assert_called_once_with("Clipboard Translator")
+            SimpleTranslatorApp(root)
+        root.title.assert_called_once_with("Simple Translator")
 
     def test_missing_api_key_shows_error_and_destroys_root(self):
         root = MagicMock()
         with (
-            patch.object(ClipboardTranslatorApp, "_build_ui"),
+            patch.object(SimpleTranslatorApp, "_build_ui"),
             patch("os.getenv", return_value=None),
             patch.object(main, "messagebox") as mock_mb,
         ):
-            ClipboardTranslatorApp(root)
+            SimpleTranslatorApp(root)
         mock_mb.showerror.assert_called_once()
         root.destroy.assert_called_once()
 
     def test_missing_api_key_does_not_create_client(self):
         root = MagicMock()
         with (
-            patch.object(ClipboardTranslatorApp, "_build_ui"),
+            patch.object(SimpleTranslatorApp, "_build_ui"),
             patch("os.getenv", return_value=None),
             patch.object(main, "messagebox"),
         ):
-            app = ClipboardTranslatorApp(root)
+            app = SimpleTranslatorApp(root)
         self.assertFalse(hasattr(app, "client"))
 
 
@@ -205,7 +207,7 @@ class TestTranslate(unittest.TestCase):
         app.client.messages.stream.return_value = self._stream_ctx([])
         app._translate("hi")
         _, kwargs = app.client.messages.stream.call_args
-        self.assertEqual(kwargs["model"], MODEL_NAME)
+        self.assertEqual(kwargs["model"], DEFAULT_MODEL)
         self.assertEqual(kwargs["max_tokens"], MAX_TOKENS)
 
     def test_prompt_contains_target_language_and_source(self):
@@ -331,5 +333,35 @@ class TestCopyResult(unittest.TestCase):
         ):
             app._copy_result()
         mock_copy.assert_not_called()
+
+
+class TestCliBehavior(unittest.TestCase):
+    def test_parse_args_enables_startup_clipboard_loading(self):
+        with patch.object(sys, "argv", ["main.py", "--load-clipboard"]):
+            args = main.parse_args()
+        self.assertTrue(args.load_clipboard)
+
+    def test_main_loads_clipboard_when_flag_is_present(self):
+        mock_app = MagicMock()
+        with (
+            patch.object(main, "parse_args", return_value=MagicMock(load_clipboard=True)),
+            patch.object(main.tk, "Tk", return_value=MagicMock()) as mock_tk,
+            patch.object(main, "SimpleTranslatorApp", return_value=mock_app),
+        ):
+            main.main()
+        mock_tk.return_value.minsize.assert_called_once_with(400, 240)
+        mock_app._load_clipboard.assert_called_once()
+        mock_tk.return_value.mainloop.assert_called_once()
+
+    def test_main_skips_clipboard_loading_without_flag(self):
+        mock_app = MagicMock()
+        with (
+            patch.object(main, "parse_args", return_value=MagicMock(load_clipboard=False)),
+            patch.object(main.tk, "Tk", return_value=MagicMock()) as mock_tk,
+            patch.object(main, "SimpleTranslatorApp", return_value=mock_app),
+        ):
+            main.main()
+        mock_app._load_clipboard.assert_not_called()
+        mock_tk.return_value.mainloop.assert_called_once()
 
 

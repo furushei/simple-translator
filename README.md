@@ -1,12 +1,12 @@
-# Clipboard Translator
+# Simple Translator
 
-Simple clipboard translator using the Anthropic API. This application allows you to translate text from the clipboard or manual input into a selected language and copy the translated text back to the clipboard.
+Simple translator using the Claude API. This application allows you to translate text entered manually, pasted from the clipboard, or loaded from the clipboard at startup, then copy the translated text back to the clipboard.
 
 ## Requirements
 
 - Python 3
 - Tkinter
-- Anthropic API key
+- Claude API key
 
 ## Installation
 
@@ -40,7 +40,12 @@ Simple clipboard translator using the Anthropic API. This application allows you
    python main.py
    ```
 
-2. Load text from the clipboard or enter it manually.
+   To load text from the clipboard at startup, launch it with:
+   ```
+   python main.py --load-clipboard
+   ```
+
+2. Load text from the clipboard with the "Paste" button or enter it manually.
 
 3. Select the target language for translation.
 
