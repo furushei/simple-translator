@@ -9,7 +9,7 @@ import threading
 
 load_dotenv()
 
-MODEL_NAMES = ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]
+MODEL_NAMES = ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]
 DEFAULT_MODEL = "claude-haiku-4-5"
 MAX_TOKENS = 2048
 
