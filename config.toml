@@ -1,0 +1,27 @@
+# Simple Translator configuration
+#
+# Edit this file to change the available options in the app without touching
+# the source code. If this file is missing or invalid, the built-in defaults
+# in main.py are used instead.
+
+# Default model selected when the app starts. Must be one of `models`.
+default_model = "claude-haiku-4-5"
+
+# Models shown in the "Model" dropdown.
+models = [
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+]
+
+# Default value for the "Max Tokens" selector.
+max_tokens = 2048
+
+# Choices shown in the "Max Tokens" dropdown.
+max_tokens_options = [512, 1024, 2048, 4096, 8192]
+
+# Target languages shown in the "Translate to" dropdown.
+# Key = label shown in the UI, value = language name used in the prompt.
+[languages]
+Japanese = "Japanese"
+English = "English"

@@ -4,7 +4,7 @@ Simple translator using the Claude API. This application allows you to translate
 
 ## Requirements
 
-- Python 3
+- Python 3.11+ (uses the standard-library `tomllib` module)
 - Tkinter
 - Claude API key
 
@@ -32,6 +32,26 @@ Simple translator using the Claude API. This application allows you to translate
    ```
    ANTHROPIC_API_KEY=your_api_key_here
    ```
+
+## Configuration
+
+The available models, default model, max-token options, and target languages
+are defined in [`config.toml`](config.toml). Edit this file to change the
+options shown in the app without modifying the source code:
+
+```toml
+default_model = "claude-haiku-4-5"
+models = ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]
+max_tokens = 2048
+max_tokens_options = [512, 1024, 2048, 4096, 8192]
+
+[languages]
+Japanese = "Japanese"
+English = "English"
+```
+
+If `config.toml` is missing or invalid, the app falls back to its built-in
+defaults.
 
 ## Usage
 

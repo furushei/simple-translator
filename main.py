@@ -5,18 +5,61 @@ import pyperclip
 import anthropic
 from dotenv import load_dotenv
 import os
+import sys
 import threading
+import tomllib
 
 load_dotenv()
 
-MODEL_NAMES = ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]
-DEFAULT_MODEL = "claude-haiku-4-5"
-MAX_TOKENS = 2048
+# Path to the TOML configuration file, resolved relative to this script so the
+# app works regardless of the current working directory.
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.toml")
 
-LANGUAGE_PROMPTS = {
-    "Japanese": "Japanese",
-    "English": "English",
+# Built-in defaults used when config.toml is missing, invalid, or incomplete.
+DEFAULT_CONFIG = {
+    "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    "default_model": "claude-haiku-4-5",
+    "max_tokens": 2048,
+    "max_tokens_options": [512, 1024, 2048, 4096, 8192],
+    "languages": {
+        "Japanese": "Japanese",
+        "English": "English",
+    },
 }
+
+
+def load_config(path: str = CONFIG_PATH) -> dict:
+    """Load configuration from a TOML file, falling back to DEFAULT_CONFIG.
+
+    Missing files or parse errors are reported to stderr and the built-in
+    defaults are used instead. Any keys absent from the file are filled in from
+    DEFAULT_CONFIG so callers always get a complete config.
+    """
+    config = {**DEFAULT_CONFIG}
+    try:
+        with open(path, "rb") as f:
+            loaded = tomllib.load(f)
+        config.update({k: v for k, v in loaded.items() if v})
+    except FileNotFoundError:
+        print(
+            f"Config file not found at {path}; using default settings.",
+            file=sys.stderr,
+        )
+    except tomllib.TOMLDecodeError as e:
+        print(
+            f"Failed to parse config file {path}: {e}; using default settings.",
+            file=sys.stderr,
+        )
+    return config
+
+
+_config = load_config()
+
+MODEL_NAMES = _config["models"]
+DEFAULT_MODEL = _config["default_model"]
+MAX_TOKENS = _config["max_tokens"]
+MAX_TOKENS_OPTIONS = _config["max_tokens_options"]
+LANGUAGE_PROMPTS = _config["languages"]
 
 
 class SimpleTranslatorApp:
@@ -90,7 +133,7 @@ class SimpleTranslatorApp:
         max_tokens_menu = ttk.Combobox(
             toolbar,
             textvariable=self.max_tokens_var,
-            values=[512, 1024, 2048, 4096, 8192],
+            values=MAX_TOKENS_OPTIONS,
             width=8,
         )
         max_tokens_menu.pack(side="left", padx=(4, 0))
