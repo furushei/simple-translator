@@ -1,6 +1,8 @@
 """Unit tests for main.py (SimpleTranslatorApp)."""
 
+import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -35,7 +37,16 @@ sys.modules["dotenv"] = MagicMock()
 # Now it is safe to import main
 # ---------------------------------------------------------------------------
 import main  # noqa: E402
-from main import SimpleTranslatorApp, LANGUAGE_PROMPTS, DEFAULT_MODEL, MAX_TOKENS  # noqa: E402
+from main import (  # noqa: E402
+    SimpleTranslatorApp,
+    LANGUAGE_PROMPTS,
+    DEFAULT_MODEL,
+    MAX_TOKENS,
+    MODEL_NAMES,
+    MAX_TOKENS_OPTIONS,
+    DEFAULT_CONFIG,
+    load_config,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +105,60 @@ class TestConstants(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIsInstance(value, str)
                 self.assertTrue(value)
+
+    def test_model_names_loaded(self):
+        self.assertIn(DEFAULT_MODEL, MODEL_NAMES)
+
+    def test_max_tokens_options_loaded(self):
+        self.assertIn(MAX_TOKENS, MAX_TOKENS_OPTIONS)
+
+
+# ---------------------------------------------------------------------------
+# Tests: configuration loading
+# ---------------------------------------------------------------------------
+
+class TestLoadConfig(unittest.TestCase):
+    def _write_toml(self, content):
+        """Write *content* to a temp .toml file and return its path."""
+        fd, path = tempfile.mkstemp(suffix=".toml")
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_missing_file_falls_back_to_defaults(self):
+        config = load_config("/nonexistent/path/config.toml")
+        self.assertEqual(config, DEFAULT_CONFIG)
+
+    def test_invalid_toml_falls_back_to_defaults(self):
+        path = self._write_toml("this is = = not valid toml")
+        config = load_config(path)
+        self.assertEqual(config, DEFAULT_CONFIG)
+
+    def test_values_are_read_from_file(self):
+        path = self._write_toml(
+            'default_model = "claude-opus-4-8"\n'
+            'models = ["claude-opus-4-8", "custom-model"]\n'
+            "max_tokens = 4096\n"
+            "max_tokens_options = [100, 200]\n"
+            "[languages]\n"
+            'French = "French"\n'
+        )
+        config = load_config(path)
+        self.assertEqual(config["default_model"], "claude-opus-4-8")
+        self.assertEqual(config["models"], ["claude-opus-4-8", "custom-model"])
+        self.assertEqual(config["max_tokens"], 4096)
+        self.assertEqual(config["max_tokens_options"], [100, 200])
+        self.assertEqual(config["languages"], {"French": "French"})
+
+    def test_missing_keys_are_filled_from_defaults(self):
+        path = self._write_toml('default_model = "claude-opus-4-8"\n')
+        config = load_config(path)
+        self.assertEqual(config["default_model"], "claude-opus-4-8")
+        # Keys absent from the file fall back to the built-in defaults.
+        self.assertEqual(config["models"], DEFAULT_CONFIG["models"])
+        self.assertEqual(config["max_tokens"], DEFAULT_CONFIG["max_tokens"])
+        self.assertEqual(config["languages"], DEFAULT_CONFIG["languages"])
 
 
 # ---------------------------------------------------------------------------
