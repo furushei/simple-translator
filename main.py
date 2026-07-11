@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import pyperclip
 import anthropic
+import openai
 from dotenv import load_dotenv
 import os
 import sys
@@ -17,7 +18,14 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.t
 
 # Built-in defaults used when config.toml is missing, invalid, or incomplete.
 DEFAULT_CONFIG = {
-    "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    "models": [
+        "claude-opus-4-8",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+        "gpt-5.6",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ],
     "default_model": "claude-haiku-4-5",
     "max_tokens": 2048,
     "max_tokens_options": [512, 1024, 2048, 4096, 8192],
@@ -61,6 +69,27 @@ MAX_TOKENS = _config["max_tokens"]
 MAX_TOKENS_OPTIONS = _config["max_tokens_options"]
 LANGUAGE_PROMPTS = _config["languages"]
 
+# Environment variable holding the API key for each supported provider.
+PROVIDER_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
+
+
+def infer_provider(model_id: str) -> str:
+    """Map a model id to its API provider by prefix.
+
+    Unknown prefixes default to Anthropic so that custom model ids typed into
+    the (editable) model combobox behave as they did before OpenAI support.
+    """
+    if model_id.startswith("gpt-"):
+        return "openai"
+    return "anthropic"
+
+
+class MissingAPIKeyError(Exception):
+    """Raised when translating with a model whose provider key is not set."""
+
 
 class SimpleTranslatorApp:
     def __init__(self, root: tk.Tk):
@@ -69,15 +98,33 @@ class SimpleTranslatorApp:
 
         self._build_ui()
 
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
+        # Provider name -> SDK client, created lazily on first use so the app
+        # runs with only one of the provider keys configured.
+        self._clients = {}
+        if not any(os.getenv(env) for env in PROVIDER_KEY_ENV.values()):
             messagebox.showerror(
                 "API Key Missing",
-                "Anthropic API key not found. Please set ANTHROPIC_API_KEY in your .env file.",
+                "No API key found. Please set ANTHROPIC_API_KEY and/or "
+                "OPENAI_API_KEY in your .env file.",
             )
             root.destroy()
             return
-        self.client = anthropic.Anthropic(api_key=api_key)
+
+    def _get_client(self, provider: str):
+        """Return (and lazily create) the SDK client for a provider."""
+        if provider not in self._clients:
+            env_var = PROVIDER_KEY_ENV[provider]
+            api_key = os.getenv(env_var)
+            if not api_key:
+                raise MissingAPIKeyError(
+                    f"{env_var} is not set. "
+                    "Add it to your .env file to use this model."
+                )
+            if provider == "openai":
+                self._clients[provider] = openai.OpenAI(api_key=api_key)
+            else:
+                self._clients[provider] = anthropic.Anthropic(api_key=api_key)
+        return self._clients[provider]
 
     def _build_ui(self):
         top_frame = tk.Frame(self.root)
@@ -258,33 +305,67 @@ class SimpleTranslatorApp:
             return
 
         self.translate_btn.config(state="disabled", text="Translating...")
-        self.status_var.set("Connecting to Claude API...")
+        self.status_var.set("Connecting to API...")
         self._set_result("")
 
         thread = threading.Thread(target=self._translate, args=(source,), daemon=True)
         thread.start()
 
+    def _stream_anthropic(self, client, model: str, max_tokens: int, prompt: str):
+        """Yield text chunks from the Anthropic Messages streaming API."""
+        with client.messages.stream(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            yield from stream.text_stream
+
+    def _stream_openai(self, client, model: str, max_tokens: int, prompt: str):
+        """Yield text chunks from the OpenAI Chat Completions streaming API."""
+        stream = client.chat.completions.create(
+            model=model,
+            # GPT-5+ reasoning models reject the deprecated max_tokens param.
+            max_completion_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        for chunk in stream:
+            # Skip role-only deltas, empty-choices chunks, and the final
+            # chunk whose delta.content is None.
+            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
     def _translate(self, source: str):
-        """Call Claude API and stream the result (runs in background thread)."""
+        """Call the translation API and stream the result (runs in background thread)."""
         target_lang = LANGUAGE_PROMPTS[self.lang_var.get()]
         prompt = (
             f"Translate the following text into {target_lang}. "
             f"Output only the translated text, nothing else.\n\n{source}"
         )
+        model = self.model_var.get()
+        provider = infer_provider(model)
 
         try:
-            with self.client.messages.stream(
-                model=self.model_var.get(),
-                max_tokens=self.max_tokens_var.get(),
-                messages=[{"role": "user", "content": prompt}],
-            ) as stream:
-                self.root.after(0, lambda: self.status_var.set("Translating..."))
-                for text_chunk in stream.text_stream:
-                    self.root.after(0, self._append_result, text_chunk)
+            client = self._get_client(provider)
+            if provider == "openai":
+                stream_fn = self._stream_openai
+            else:
+                stream_fn = self._stream_anthropic
+            self.root.after(0, lambda: self.status_var.set("Translating..."))
+            for text_chunk in stream_fn(
+                client, model, self.max_tokens_var.get(), prompt
+            ):
+                self.root.after(0, self._append_result, text_chunk)
 
             self.root.after(0, self._on_translate_done)
 
-        except anthropic.AuthenticationError:
+        except MissingAPIKeyError as e:
+            self.root.after(
+                0,
+                lambda msg=str(e): messagebox.showerror("API Key Missing", msg),
+            )
+            self.root.after(0, self._on_translate_done)
+        except (anthropic.AuthenticationError, openai.AuthenticationError):
             self.root.after(
                 0,
                 lambda: messagebox.showerror(
@@ -296,9 +377,9 @@ class SimpleTranslatorApp:
         except Exception as e:
             self.root.after(
                 0,
-                lambda: messagebox.showerror(
+                lambda msg=str(e): messagebox.showerror(
                     "Error",
-                    f"An error occurred while translating:\n{e}"
+                    f"An error occurred while translating:\n{msg}"
                 )
             )
             self.root.after(0, self._on_translate_done)

@@ -30,6 +30,11 @@ _anthropic_mock = MagicMock()
 _anthropic_mock.AuthenticationError = type("AuthenticationError", (Exception,), {})
 sys.modules["anthropic"] = _anthropic_mock
 
+# openai – same treatment as anthropic.
+_openai_mock = MagicMock()
+_openai_mock.AuthenticationError = type("AuthenticationError", (Exception,), {})
+sys.modules["openai"] = _openai_mock
+
 # python-dotenv (load_dotenv is called at module level)
 sys.modules["dotenv"] = MagicMock()
 
@@ -45,6 +50,8 @@ from main import (  # noqa: E402
     MODEL_NAMES,
     MAX_TOKENS_OPTIONS,
     DEFAULT_CONFIG,
+    MissingAPIKeyError,
+    infer_provider,
     load_config,
 )
 
@@ -79,7 +86,10 @@ def _make_app(api_key="test-api-key"):
     app.model_var.get.return_value = DEFAULT_MODEL
     app.max_tokens_var = MagicMock()
     app.max_tokens_var.get.return_value = MAX_TOKENS
+    # A single mock client shared by both providers so tests can assert on
+    # either app.client.messages.stream or app.client.chat.completions.create.
     app.client = MagicMock()
+    app._clients = {"anthropic": app.client, "openai": app.client}
     return app, root
 
 
@@ -108,6 +118,9 @@ class TestConstants(unittest.TestCase):
 
     def test_model_names_loaded(self):
         self.assertIn(DEFAULT_MODEL, MODEL_NAMES)
+
+    def test_model_names_include_gpt(self):
+        self.assertIn("gpt-5.6", MODEL_NAMES)
 
     def test_max_tokens_options_loaded(self):
         self.assertIn(MAX_TOKENS, MAX_TOKENS_OPTIONS)
@@ -199,7 +212,79 @@ class TestInit(unittest.TestCase):
             patch.object(main, "messagebox"),
         ):
             app = SimpleTranslatorApp(root)
-        self.assertFalse(hasattr(app, "client"))
+        self.assertEqual(app._clients, {})
+
+    def test_starts_with_only_anthropic_key(self):
+        root = MagicMock()
+        getenv = lambda name, default=None: "key" if name == "ANTHROPIC_API_KEY" else default
+        with (
+            patch.object(SimpleTranslatorApp, "_build_ui"),
+            patch("os.getenv", side_effect=getenv),
+            patch.object(main, "messagebox") as mock_mb,
+        ):
+            SimpleTranslatorApp(root)
+        mock_mb.showerror.assert_not_called()
+        root.destroy.assert_not_called()
+
+    def test_starts_with_only_openai_key(self):
+        root = MagicMock()
+        getenv = lambda name, default=None: "key" if name == "OPENAI_API_KEY" else default
+        with (
+            patch.object(SimpleTranslatorApp, "_build_ui"),
+            patch("os.getenv", side_effect=getenv),
+            patch.object(main, "messagebox") as mock_mb,
+        ):
+            SimpleTranslatorApp(root)
+        mock_mb.showerror.assert_not_called()
+        root.destroy.assert_not_called()
+
+
+class TestInferProvider(unittest.TestCase):
+    def test_claude_models_map_to_anthropic(self):
+        self.assertEqual(infer_provider("claude-haiku-4-5"), "anthropic")
+        self.assertEqual(infer_provider("claude-opus-4-8"), "anthropic")
+
+    def test_gpt_models_map_to_openai(self):
+        self.assertEqual(infer_provider("gpt-5.6"), "openai")
+        self.assertEqual(infer_provider("gpt-5.6-sol"), "openai")
+        self.assertEqual(infer_provider("gpt-5.6-terra"), "openai")
+        self.assertEqual(infer_provider("gpt-5.6-luna"), "openai")
+
+    def test_unknown_models_default_to_anthropic(self):
+        self.assertEqual(infer_provider("custom-model"), "anthropic")
+
+
+class TestGetClient(unittest.TestCase):
+    def test_creates_and_caches_anthropic_client(self):
+        app, _ = _make_app()
+        app._clients = {}
+        with (
+            patch("os.getenv", return_value="sk-ant"),
+            patch.object(main.anthropic, "Anthropic") as mock_cls,
+        ):
+            client = app._get_client("anthropic")
+            again = app._get_client("anthropic")
+        mock_cls.assert_called_once_with(api_key="sk-ant")
+        self.assertIs(client, mock_cls.return_value)
+        self.assertIs(again, client)
+
+    def test_creates_openai_client(self):
+        app, _ = _make_app()
+        app._clients = {}
+        with (
+            patch("os.getenv", return_value="sk-oai"),
+            patch.object(main.openai, "OpenAI") as mock_cls,
+        ):
+            client = app._get_client("openai")
+        mock_cls.assert_called_once_with(api_key="sk-oai")
+        self.assertIs(client, mock_cls.return_value)
+
+    def test_missing_key_raises(self):
+        app, _ = _make_app()
+        app._clients = {}
+        with patch("os.getenv", return_value=None):
+            with self.assertRaises(MissingAPIKeyError):
+                app._get_client("openai")
 
 
 class TestLoadClipboard(unittest.TestCase):
@@ -317,6 +402,105 @@ class TestTranslate(unittest.TestCase):
         app._translate("hi")
         scheduled_callbacks = [call.args[1] for call in root.after.call_args_list if len(call.args) > 1]
         self.assertIn(app._on_translate_done, scheduled_callbacks)
+
+    def test_does_not_touch_openai_path(self):
+        app, _ = _make_app()
+        app.client.messages.stream.return_value = self._stream_ctx([])
+        app._translate("hi")
+        app.client.chat.completions.create.assert_not_called()
+
+
+class TestTranslateOpenAI(unittest.TestCase):
+    @staticmethod
+    def _chunk(content):
+        """Build a mock Chat Completions stream chunk with *content*."""
+        chunk = MagicMock()
+        delta = MagicMock()
+        delta.content = content
+        choice = MagicMock()
+        choice.delta = delta
+        chunk.choices = [choice]
+        return chunk
+
+    def _make_openai_app(self, chunks):
+        app, root = _make_app()
+        app.model_var.get.return_value = "gpt-5.6"
+        app.client.chat.completions.create.return_value = iter(chunks)
+        return app, root
+
+    def test_calls_api_with_correct_model_and_tokens(self):
+        app, _ = self._make_openai_app([])
+        app._translate("hi")
+        _, kwargs = app.client.chat.completions.create.call_args
+        self.assertEqual(kwargs["model"], "gpt-5.6")
+        self.assertEqual(kwargs["max_completion_tokens"], MAX_TOKENS)
+        self.assertTrue(kwargs["stream"])
+        self.assertNotIn("max_tokens", kwargs)
+
+    def test_prompt_contains_target_language_and_source(self):
+        app, _ = self._make_openai_app([])
+        app._translate("Bonjour")
+        _, kwargs = app.client.chat.completions.create.call_args
+        content = kwargs["messages"][0]["content"]
+        self.assertIn("Japanese", content)
+        self.assertIn("Bonjour", content)
+
+    def test_success_schedules_on_translate_done(self):
+        app, root = self._make_openai_app([self._chunk("Hello")])
+        app._translate("Bonjour")
+        scheduled_callbacks = [call.args[1] for call in root.after.call_args_list if len(call.args) > 1]
+        self.assertIn(app._on_translate_done, scheduled_callbacks)
+
+    def test_success_schedules_append_result_for_each_chunk(self):
+        chunks = [self._chunk("chunk1"), self._chunk("chunk2"), self._chunk("chunk3")]
+        app, root = self._make_openai_app(chunks)
+        app._translate("text")
+        append_calls = [
+            call for call in root.after.call_args_list
+            if len(call.args) > 1 and call.args[1] == app._append_result
+        ]
+        self.assertEqual(len(append_calls), len(chunks))
+
+    def test_skips_empty_and_final_chunks(self):
+        empty_choices = MagicMock()
+        empty_choices.choices = []
+        chunks = [self._chunk(None), self._chunk("text"), empty_choices, self._chunk(None)]
+        app, root = self._make_openai_app(chunks)
+        app._translate("text")
+        append_calls = [
+            call for call in root.after.call_args_list
+            if len(call.args) > 1 and call.args[1] == app._append_result
+        ]
+        self.assertEqual(len(append_calls), 1)
+
+    def test_auth_error_schedules_on_translate_done(self):
+        app, root = self._make_openai_app([])
+        app.client.chat.completions.create.side_effect = main.openai.AuthenticationError()
+        app._translate("hi")
+        scheduled_callbacks = [call.args[1] for call in root.after.call_args_list if len(call.args) > 1]
+        self.assertIn(app._on_translate_done, scheduled_callbacks)
+
+    def test_does_not_touch_anthropic_path(self):
+        app, _ = self._make_openai_app([])
+        app._translate("hi")
+        app.client.messages.stream.assert_not_called()
+
+    def test_missing_key_shows_error_and_finishes(self):
+        app, root = self._make_openai_app([])
+        app._clients = {}
+        with (
+            patch("os.getenv", return_value=None),
+            patch.object(main, "messagebox") as mock_mb,
+        ):
+            app._translate("hi")
+            # Run the deferred UI callbacks scheduled via root.after.
+            for call in root.after.call_args_list:
+                if len(call.args) > 1:
+                    call.args[1](*call.args[2:])
+        mock_mb.showerror.assert_called_once()
+        scheduled_callbacks = [call.args[1] for call in root.after.call_args_list if len(call.args) > 1]
+        self.assertIn(app._on_translate_done, scheduled_callbacks)
+        app.client.chat.completions.create.assert_not_called()
 
 
 class TestSetResult(unittest.TestCase):
